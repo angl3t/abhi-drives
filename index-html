@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AbhiDrives - 2D Highway Racer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      touch-action: manipulation;
+    }
+    body {
+      background: #0b0c10;
+      color: #c5c6c7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #hud {
+      display: flex;
+      justify-content: space-between;
+      width: 95vw;
+      max-width: 420px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .hud-box {
+      background: #1f2833;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #45a29e;
+    }
+    #gameWrapper {
+      position: relative;
+    }
+    canvas {
+      background: #1f2833;
+      border: 3px solid #66fcf1;
+      border-radius: 8px;
+      display: block;
+      max-height: 60vh;
+      width: auto;
+    }
+    /* Mobile Touch Pad */
+    #touchControls {
+      display: flex;
+      justify-content: space-between;
+      width: 95vw;
+      max-width: 420px;
+      margin-top: 8px;
+    }
+    .control-cluster {
+      display: flex;
+      gap: 8px;
+    }
+    .btn {
+      background: #1f2833;
+      border: 2px solid #45a29e;
+      color: #66fcf1;
+      font-size: 18px;
+      font-weight: bold;
+      width: 58px;
+      height: 52px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+    .btn:active {
+      background: #45a29e;
+      color: #0b0c10;
+    }
+    .btn-nitro {
+      border-color: #f1c40f;
+      color: #f1c40f;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <div class="hud-box" id="scoreLabel">0m</div>
+    <div class="hud-box" id="coinLabel">🪙 0</div>
+    <div class="hud-box" id="speedLabel">0 km/h</div>
+    <div class="hud-box" id="nitroLabel">⚡ 100%</div>
+  </div>
+
+  <div id="gameWrapper">
+    <canvas id="gameCanvas" width="380" height="560"></canvas>
+  </div>
+
+  <div id="touchControls">
+    <div class="control-cluster">
+      <div class="btn" id="btnLeft">◀</div>
+      <div class="btn" id="btnRight">▶</div>
+    </div>
+    <div class="control-cluster">
+      <div class="btn btn-nitro" id="btnNitro">⚡</div>
+      <div class="btn" id="btnDown">▼</div>
+      <div class="btn" id="btnUp">▲</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    const scoreLabel = document.getElementById("scoreLabel");
+    const coinLabel = document.getElementById("coinLabel");
+    const speedLabel = document.getElementById("speedLabel");
+    const nitroLabel = document.getElementById("nitroLabel");
+
+    const roadWidth = 320;
+    const roadLeft = (canvas.width - roadWidth) / 2;
+    const lanes = 3;
+    const laneWidth = roadWidth / lanes;
+    let roadOffsetY = 0;
+
+    let distance = 0;
+    let coinsCollected = 0;
+    let gameOver = false;
+    let spawnTimer = 0;
+    let coinTimer = 0;
+
+    const keys = { up: false, down: false, left: false, right: false, nitro: false };
+
+    const player = {
+      x: roadLeft + laneWidth * 1.5 - 18,
+      y: canvas.height - 120,
+      width: 36,
+      height: 68,
+      speed: 0,
+      maxNormalSpeed: 13,
+      nitroMaxSpeed: 19,
+      accel: 0.22,
+      friction: 0.08,
+      turnSpeed: 4.8,
+      nitroFuel: 100,
+      color: "#ff3838"
+    };
+
+    const traffic = [];
+    const coins = [];
+    const trafficColors = ["#3498db", "#2ecc71", "#f1c40f", "#9b59b6", "#e67e22"];
+
+    // Touch setup
+    function bindTouch(id, key) {
+      const el = document.getElementById(id);
+      el.addEventListener("touchstart", (e) => { e.preventDefault(); keys[key] = true; if(gameOver) resetGame(); });
+      el.addEventListener("touchend", (e) => { e.preventDefault(); keys[key] = false; });
+    }
+    bindTouch("btnLeft", "left");
+    bindTouch("btnRight", "right");
+    bindTouch("btnUp", "up");
+    bindTouch("btnDown", "down");
+    bindTouch("btnNitro", "nitro");
+
+    // Keyboard support
+    window.addEventListener("keydown", (e) => {
+      const k = e.key.toLowerCase();
+      if (k === "arrowup" || k === "w") keys.up = true;
+      if (k === "arrowdown" || k === "s") keys.down = true;
+      if (k === "arrowleft" || k === "a") keys.left = true;
+      if (k === "arrowright" || k === "d") keys.right = true;
+      if (k === " " || k === "shift") keys.nitro = true;
+      if (k === "r" && gameOver) resetGame();
+    });
+    window.addEventListener("keyup", (e) => {
+      const k = e.key.toLowerCase();
+      if (k === "arrowup" || k === "w") keys.up = false;
+      if (k === "arrowdown" || k === "s") keys.down = false;
+      if (k === "arrowleft" || k === "a") keys.left = false;
+      if (k === "arrowright" || k === "d") keys.right = false;
+      if (k === " " || k === "shift") keys.nitro = false;
+    });
+
+    canvas.addEventListener("click", () => { if (gameOver) resetGame(); });
+
+    function spawnCar() {
+      const laneIndex = Math.floor(Math.random() * lanes);
+      const laneCenter = roadLeft + laneIndex * laneWidth + laneWidth / 2;
+      traffic.push({
+        x: laneCenter - 18,
+        y: -100,
+        width: 36,
+        height: 68,
+        speed: Math.random() * 2 + 3.5,
+        color: trafficColors[Math.floor(Math.random() * trafficColors.length)]
+      });
+    }
+
+    function spawnCoin() {
+      const laneIndex = Math.floor(Math.random() * lanes);
+      coins.push({ x: roadLeft + laneIndex * laneWidth + laneWidth / 2, y: -30, radius: 9 });
+    }
+
+    function checkCollision(r1, r2) {
+      const m = 4;
+      return (
+        r1.x + m < r2.x + r2.width - m &&
+        r1.x + r1.width - m > r2.x + m &&
+        r1.y + m < r2.y + r2.height - m &&
+        r1.y + r1.height - m > r2.y + m
+      );
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      const isBoosting = keys.nitro && player.nitroFuel > 0 && player.speed > 3;
+      const targetSpeed = isBoosting ? player.nitroMaxSpeed : player.maxNormalSpeed;
+
+      if (isBoosting) {
+        player.nitroFuel = Math.max(0, player.nitroFuel - 0.6);
+        player.speed = Math.min(player.speed + player.accel * 2, targetSpeed);
+      } else {
+        if (!keys.nitro) player.nitroFuel = Math.min(100, player.nitroFuel + 0.1);
+        if (keys.up) player.speed = Math.min(player.speed + player.accel, targetSpeed);
+        else if (keys.down) player.speed = Math.max(player.speed - player.accel * 1.6, 0);
+        else player.speed = Math.max(player.speed - player.friction, 0);
+      }
+
+      if (player.speed > 0.5) {
+        if (keys.left) player.x -= player.turnSpeed;
+        if (keys.right) player.x += player.turnSpeed;
+      }
+
+      if (player.x < roadLeft + 2) player.x = roadLeft + 2;
+      if (player.x + player.width > roadLeft + roadWidth - 2) player.x = roadLeft + roadWidth - player.width - 2;
+
+      roadOffsetY = (roadOffsetY + player.speed * 2) % 44;
+      distance += Math.floor(player.speed * 0.4);
+
+      scoreLabel.innerText = distance + "m";
+      coinLabel.innerText = "🪙 " + coinsCollected;
+      speedLabel.innerText = Math.round(player.speed * 12) + " km/h";
+      nitroLabel.innerText = "⚡ " + Math.round(player.nitroFuel) + "%";
+
+      spawnTimer++;
+      if (spawnTimer > Math.max(45, 90 - player.speed * 2)) {
+        spawnCar();
+        spawnTimer = 0;
+      }
+
+      coinTimer++;
+      if (coinTimer > 85) {
+        spawnCoin();
+        coinTimer = 0;
+      }
+
+      for (let i = traffic.length - 1; i >= 0; i--) {
+        const car = traffic[i];
+        car.y += (player.speed - car.speed) * 1.5;
+        if (checkCollision(player, car)) gameOver = true;
+        if (car.y > canvas.height + 100 || car.y < -250) traffic.splice(i, 1);
+      }
+
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        c.y += player.speed * 1.5;
+        if (Math.abs(c.x - (player.x + player.width / 2)) < 22 && Math.abs(c.y - (player.y + player.height / 2)) < 30) {
+          coins.splice(i, 1);
+          coinsCollected++;
+          continue;
+        }
+        if (c.y > canvas.height + 40) coins.splice(i, 1);
+      }
+    }
+
+    function drawCar(car, isPlayer) {
+      ctx.save();
+      ctx.translate(car.x, car.y);
+      ctx.fillStyle = car.color;
+      ctx.beginPath();
+      ctx.roundRect(0, 0, car.width, car.height, 7);
+      ctx.fill();
+
+      // Glass
+      ctx.fillStyle = "#1e272e";
+      ctx.fillRect(4, 16, car.width - 8, 12);
+      ctx.fillRect(5, car.height - 20, car.width - 10, 9);
+
+      // Lights
+      ctx.fillStyle = isPlayer ? "#fffa65" : "#ff3838";
+      ctx.fillRect(3, 2, 6, 3);
+      ctx.fillRect(car.width - 9, 2, 6, 3);
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Grass & Road
+      ctx.fillStyle = "#1e5233";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#272a33";
+      ctx.fillRect(roadLeft, 0, roadWidth, canvas.height);
+
+      // Curbs
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(roadLeft - 5, 0, 5, canvas.height);
+      ctx.fillRect(roadLeft + roadWidth, 0, 5, canvas.height);
+
+      // Lanes
+      ctx.strokeStyle = "#ecf0f1";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([22, 18]);
+      ctx.lineDashOffset = -roadOffsetY;
+      for (let i = 1; i < lanes; i++) {
+        const x = roadLeft + i * laneWidth;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // Coins
+      ctx.fillStyle = "#f1c40f";
+      for (const c of coins) {
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Vehicles
+      for (const car of traffic) drawCar(car, false);
+      drawCar(player, true);
+
+      if (gameOver) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#ff3838";
+        ctx.font = "bold 28px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("CRASHED!", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("Score: " + distance + "m | Coins: " + coinsCollected, canvas.width / 2, canvas.height / 2 + 15);
+        ctx.fillStyle = "#66fcf1";
+        ctx.fillText("Tap screen to Restart", canvas.width / 2, canvas.height / 2 + 50);
+      }
+    }
+
+    function resetGame() {
+      distance = 0;
+      coinsCollected = 0;
+      player.speed = 0;
+      player.nitroFuel = 100;
+      player.x = roadLeft + laneWidth * 1.5 - 18;
+      traffic.length = 0;
+      coins.length = 0;
+      gameOver = false;
+      requestAnimationFrame(gameLoop);
+    }
+
+    function gameLoop() {
+      update();
+      draw();
+      if (!gameOver) requestAnimationFrame(gameLoop);
+    }
+
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
